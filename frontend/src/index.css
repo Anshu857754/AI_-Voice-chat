@@ -1,0 +1,86 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #0b0f1a;
+  --color-panel: #12172a;
+  --color-panel-raised: #171d35;
+  --color-border: #232a45;
+  --color-text: #e8ebf5;
+  --color-text-dim: #8890ab;
+  --color-accent: #7c5cff;
+  --color-accent-soft: #7c5cff33;
+  --color-dost: #4fa8ff;
+  --color-dost-soft: #4fa8ff26;
+  --color-sathi: #ff6fa8;
+  --color-sathi-soft: #ff6fa826;
+  --color-live: #35d68a;
+  --color-warn: #ffb648;
+  --color-danger: #ff5c72;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family:
+    'Inter',
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-dim);
+}
+
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 currentColor;
+    opacity: 0.7;
+  }
+  100% {
+    box-shadow: 0 0 0 8px transparent;
+    opacity: 0;
+  }
+}
+
+.speaking-ring::before {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: inherit;
+  border: 2px solid currentColor;
+  animation: pulse-ring 1.4s ease-out infinite;
+}
+
+@keyframes bar-bounce {
+  0%,
+  100% {
+    transform: scaleY(0.3);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+.voice-bar {
+  animation: bar-bounce 0.9s ease-in-out infinite;
+}
