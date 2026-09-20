@@ -22,6 +22,11 @@ python-dotenv==1.2.3
 pydantic==2.13.5
 pydantic-settings==2.15.0
 
+# --- Accounts + chat history ----------------------------------------------
+PyJWT==2.14.0
+pymongo==4.18.1  # MongoDB Atlas; mongodb+srv:// URIs also need dnspython
+dnspython==2.8.0
+
 # --- Dev / test --------------------------------------------------------
 pytest==9.1.1
 pytest-asyncio==1.4.0

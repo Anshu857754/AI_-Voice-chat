@@ -16,6 +16,7 @@ import asyncio
 import contextlib
 import signal
 import sys
+import time
 
 from app.config.settings import get_settings, reload_settings
 from app.orchestrator import RoomOrchestrator
@@ -30,6 +31,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description="Run Roxstar AI Dost and AI Sathi as LiveKit participants.",
     )
     parser.add_argument("--room", default=None, help="room name (default: ROOM_NAME)")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="skip the duplicate-worker check (takes over the bot identities)",
+    )
     parser.add_argument(
         "--check",
         action="store_true",
@@ -77,8 +83,49 @@ def _report_config() -> int:
     return 1 if missing else 0
 
 
-async def _run(room: str | None) -> None:
+async def _ensure_single_worker(settings, room: str, wait_s: float = 30.0) -> bool:
+    """False if another worker already owns the bot identities in this room.
+
+    A worker that was just stopped leaves its participants in the room for a
+    few seconds, so keep checking for ``wait_s`` before declaring a duplicate.
+    A LiveKit API failure never blocks startup (the DuplicateIdentity handler is
+    the safety net); it only skips the check.
+    """
+    from livekit import api
+
+    ids = {settings.dost_identity, settings.sathi_identity}
+    deadline = time.monotonic() + wait_s
+    lk = api.LiveKitAPI(settings.livekit_url, settings.livekit_api_key, settings.livekit_api_secret)
+    try:
+        while True:
+            try:
+                res = await lk.room.list_participants(api.ListParticipantsRequest(room=room))
+            except Exception as exc:
+                log.warning(tag=TAG_AGENT, event="duplicate_check_skipped", error=repr(exc))
+                return True
+            present = sorted(p.identity for p in res.participants if p.identity in ids)
+            if not present:
+                log.stage(TAG_AGENT, event="single_worker_ok", room=room)
+                return True
+            if time.monotonic() >= deadline:
+                log.error(
+                    tag=TAG_AGENT,
+                    event="duplicate_worker",
+                    present=",".join(present),
+                    detail="another agent worker is already running in this room. "
+                    "Stop it first (only ONE worker may run), or start with --force.",
+                )
+                return False
+            log.stage(TAG_AGENT, event="waiting_for_previous_worker", present=",".join(present))
+            await asyncio.sleep(2)
+    finally:
+        await lk.aclose()
+
+
+async def _run(room: str | None, force: bool = False) -> None:
     settings = get_settings()
+    if not force and not await _ensure_single_worker(settings, room or settings.room_name):
+        raise SystemExit(3)
     orchestrator = RoomOrchestrator(settings=settings, room_name=room or settings.room_name)
 
     stop = asyncio.Event()
@@ -140,7 +187,7 @@ def main(argv: list[str] | None = None) -> int:
     log.stage(TAG_AGENT, event="worker_registered", room=args.room or settings.room_name)
 
     try:
-        asyncio.run(_run(args.room))
+        asyncio.run(_run(args.room, args.force))
     except KeyboardInterrupt:
         log.stage(TAG_AGENT, event="interrupted")
     return 0

@@ -69,7 +69,9 @@ class RoomIngress:
         on_participant_joined: ParticipantCallback | None = None,
         on_participant_left: ParticipantCallback | None = None,
         vad: object | None = None,
+        on_stt_failure: Callable[[str, str], Awaitable[None]] | None = None,
     ) -> None:
+        self._on_stt_failure = on_stt_failure
         self._room = room
         self._registry = registry
         self._stt = stt
@@ -300,8 +302,10 @@ class RoomIngress:
                 tag=TAG_STT, event="session_failed", speaker=identity, error=str(exc),
                 detail="this speaker's voice input stopped; chat still works",
             )
+            await self._report_stt_failure(identity, "stt_stream_failed")
         except Exception as exc:
             log.exception(tag=TAG_STT, event="session_error", speaker=identity, error=repr(exc))
+            await self._report_stt_failure(identity, "stt_session_error")
         finally:
             for task in tasks:
                 task.cancel()
@@ -316,6 +320,12 @@ class RoomIngress:
             with contextlib.suppress(Exception):
                 await audio_stream.aclose()
             log.stage(TAG_STT, event="session_closed", speaker=identity)
+
+    async def _report_stt_failure(self, identity: str, reason: str) -> None:
+        """Tell the orchestrator (and so the UI) that this speaker's voice input stopped."""
+        if self._on_stt_failure is not None:
+            with contextlib.suppress(Exception):
+                await self._on_stt_failure(identity, reason)
 
     # ---- housekeeping -----------------------------------------------------
     def _spawn(self, coro: Awaitable[None]) -> None:

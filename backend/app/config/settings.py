@@ -20,7 +20,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 STTProviderName = Literal["deepgram", "null"]
-TTSProviderName = Literal["elevenlabs", "silent"]
+TTSProviderName = Literal["elevenlabs", "sarvam", "silent"]
 
 
 class Settings(BaseSettings):
@@ -86,7 +86,13 @@ class Settings(BaseSettings):
     # ---- Routing ----------------------------------------------------------
     router_min_question_chars: int = 3
     router_followup_window_s: float = 45.0
-    turn_response_timeout_s: float = 30.0
+    turn_response_timeout_s: float = 120.0
+
+    # ---- Echo / noise guards (voice input only) ---------------------------
+    # Speech heard while an AI speaks (+ tail) is treated as the AI's own echo.
+    echo_guard_tail_s: float = 1.2
+    stt_min_confidence: float = 0.65
+    stt_allowed_languages: str = "en,hi"
 
     # ---- Barge-in ---------------------------------------------------------
     interrupt_min_speech_ms: int = 200
@@ -104,6 +110,18 @@ class Settings(BaseSettings):
     api_port: int = 8000
     token_ttl_minutes: int = 120
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+
+    # ---- Accounts (login / signup) ------------------------------------------
+    auth_required: bool = True
+    auth_secret: str = ""  # falls back to a key derived from LIVEKIT_API_SECRET
+    auth_db_path: Path = Path("./data/users.db")
+    auth_token_ttl_hours: int = 168
+
+    # ---- Chat history (survives reloads and worker restarts) ------------------
+    mongodb_uri: str = ""  # MongoDB Atlas connection string; empty -> local SQLite
+    mongodb_db: str = "roxstar"
+    history_db_path: Path = Path("./data/chat.db")
+    history_restore_turns: int = 20  # turns reloaded into the bots' context on start
 
     @field_validator("stt_provider", mode="before")
     @classmethod
@@ -138,6 +156,8 @@ class Settings(BaseSettings):
     def tts_configured(self) -> bool:
         if self.tts_provider == "silent":
             return True
+        if self.tts_provider == "sarvam" and self.tts_model.startswith("eleven"):
+            return False  # TTS_MODEL must be a Sarvam model id
         return bool(self.tts_api_key and self.dost_voice_id and self.sathi_voice_id)
 
     def missing_required(self) -> list[str]:
@@ -153,7 +173,9 @@ class Settings(BaseSettings):
             missing.append("OPENROUTER_API_KEY")
         if self.stt_provider == "deepgram" and not self.stt_api_key:
             missing.append("STT_API_KEY")
-        if self.tts_provider == "elevenlabs":
+        if self.tts_provider in ("elevenlabs", "sarvam"):
+            if self.tts_provider == "sarvam" and self.tts_model.startswith("eleven"):
+                missing.append("TTS_MODEL (a Sarvam model id)")
             if not self.tts_api_key:
                 missing.append("TTS_API_KEY")
             if not self.dost_voice_id:

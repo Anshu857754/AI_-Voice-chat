@@ -315,7 +315,13 @@ def build_tts_provider(bot: BotId, settings: Settings | None = None) -> TTSProvi
     voice = voice_config_for(bot, s)
     if s.tts_provider == "elevenlabs" and s.tts_api_key and voice.voice_id:
         return ElevenLabsTTSProvider(api_key=s.tts_api_key, voice=voice, label=bot.value)
-    if s.tts_provider == "elevenlabs":
+    if s.tts_provider == "sarvam" and s.tts_api_key and voice.voice_id and not s.tts_model.startswith("eleven"):
+        from app.pipeline.tts_sarvam import SarvamTTSProvider  # lazy: only when selected
+
+        return SarvamTTSProvider(
+            api_key=s.tts_api_key, speaker=voice.voice_id, model=s.tts_model, language=s.tts_language, label=bot.value
+        )
+    if s.tts_provider in ("elevenlabs", "sarvam"):
         missing = "TTS_API_KEY" if not s.tts_api_key else f"{bot.value.upper()}_VOICE_ID"
         log.warning(
             tag=TAG_TTS,

@@ -46,6 +46,12 @@ class Turn:
     created_at: float = field(default_factory=time.time)
     turn_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     interrupted: bool = False
+    # Which saved conversation this turn belongs to (None = legacy room history).
+    conversation_id: str | None = None
+    # Correlation: a bot reply points at the human message it answers (request_id) and
+    # records how it was delivered (response_mode: text | voice). turn_id is the response id.
+    request_id: str | None = None
+    response_mode: str | None = None
 
     @property
     def is_human(self) -> bool:
@@ -73,6 +79,7 @@ class RoutingReason(str, Enum):
     BOT_SELF_ECHO = "bot_self_echo"
     DUPLICATE_SUPPRESSED = "duplicate_suppressed"
     INTERRUPTION_REDIRECT = "interruption_redirect"
+    AI_CHAIN = "ai_chain"
 
 
 @dataclass

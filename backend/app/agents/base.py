@@ -147,6 +147,12 @@ class BotAgent:
         self._publication: rtc.LocalTrackPublication | None = None
         self._connected = False
         self.state: BotState = BotState.OFFLINE
+        # The agent alone knows when audio is really playing (SPEAKING); the
+        # orchestrator listens here for its echo guard and barge-in logic.
+        self.state_listener: Callable[[BotId, BotState], None] | None = None
+        # Set when the user leaves voice mode: silences audio only, the reply
+        # keeps being written and delivered as text.
+        self.audio_muted = False
         self._system_prompt = persona_for(self.bot_id.value)
 
     # ---- lifecycle --------------------------------------------------------
@@ -213,6 +219,8 @@ class BotAgent:
         if state is self.state:
             return
         self.state = state
+        if self.state_listener is not None:
+            self.state_listener(self.bot_id, state)
         await self._set_attributes(state)
 
     def reset_room(self) -> None:
@@ -265,8 +273,12 @@ class BotAgent:
         temperature: float = 0.7,
         on_text_ready: Callable[[str], Awaitable[None]] | None = None,
         max_sentences: int | None = None,
+        speak_gate: Callable[[], bool] | None = None,
     ) -> SpeakResult:
         """Generate a reply and speak it, streaming sentence by sentence.
+
+        ``speak_gate`` is re-checked before every chunk: if it turns False (the
+        user left voice mode mid-reply) the rest is delivered as text only.
 
         Generation and speech are two concurrent stages joined by a queue.
         Speaking is real-time (the audio source blocks once ~1s is buffered),
@@ -277,6 +289,7 @@ class BotAgent:
         soon as the LLM finishes, while the audio is still playing.
         """
         result = SpeakResult()
+        self.audio_muted = False
         await self.set_state(BotState.THINKING)
 
         chunks_spoken: list[str] = []
@@ -292,6 +305,9 @@ class BotAgent:
                         return
                     if token.cancelled or result.tts_failed:
                         continue  # drain: nothing more should be spoken
+                    if speak_gate is not None and not speak_gate():
+                        chunks_spoken.append(item)  # text only from here on
+                        continue
                     spoken = await self._speak_chunk(item, trace, token, result)
                     if spoken:
                         chunks_spoken.append(spoken)
@@ -313,7 +329,7 @@ class BotAgent:
                 if not chunk_text:
                     opening_done = False
                     return
-            if speak:
+            if speak and (speak_gate is None or speak_gate()):
                 queue.put_nowait(chunk_text)
             else:
                 chunks_spoken.append(chunk_text)
@@ -327,6 +343,7 @@ class BotAgent:
                     raise TurnCancelled(token.reason or "cancelled")
                 if trace.llm_first_token_at is None:
                     trace.llm_first_token_at = LatencyTrace.now()
+                    await self.set_state(BotState.GENERATING)
                     log.stage(
                         TAG_LLM,
                         event="first_token",
@@ -431,6 +448,7 @@ class BotAgent:
     ) -> SpeakResult:
         """Speak a fixed string (used for failure fallbacks)."""
         result = SpeakResult(text_generated=text)
+        self.audio_muted = False
         spoken = await self._speak_chunk(text, trace, token, result)
         result.text_spoken = spoken
         await self.set_state(BotState.IDLE if not result.interrupted else BotState.INTERRUPTED)
@@ -450,27 +468,37 @@ class BotAgent:
         if token.cancelled:
             result.interrupted = True
             return ""
+        if self.audio_muted:
+            return speakable  # user left voice mode: text only, no TTS call
         if self._source is None:
             # No audio path (not connected): the caller still delivers text.
             return speakable
 
-        await self.set_state(BotState.SPEAKING)
+        # SPEAKING is only claimed once the first audio frame is really published;
+        # until then the honest state is SYNTHESIZING ("Preparing voice...").
+        if self.state is not BotState.SPEAKING:
+            await self.set_state(BotState.SYNTHESIZING)
         handle = self._tts.synthesize(speakable)
         published = 0
         try:
             async for frame in handle.frames():
-                if token.cancelled:
-                    result.interrupted = True
+                if token.cancelled or self.audio_muted:
                     await handle.cancel()
                     await self._stop_audio()
                     log.stage(
                         TAG_TTS, event="stream_cut", bot=self.bot_id.value,
-                        frames=published, reason=token.reason,
+                        frames=published, reason=token.reason or "audio_muted",
                     )
-                    return speakable if published else ""
+                    if token.cancelled:
+                        result.interrupted = True
+                    else:
+                        await self.set_state(BotState.THINKING)  # text keeps coming
+                    return speakable
                 if trace.tts_first_frame_at is None:
                     trace.tts_first_frame_at = LatencyTrace.now()
                 await self._source.capture_frame(frame)
+                if self.state is not BotState.SPEAKING:
+                    await self.set_state(BotState.SPEAKING)
                 if trace.published_at is None:
                     trace.published_at = LatencyTrace.now()
                     log.stage(
@@ -513,6 +541,11 @@ class BotAgent:
         """Public hook used by the orchestrator on barge-in."""
         await self._stop_audio()
         await self.set_state(BotState.INTERRUPTED)
+
+    async def mute_audio(self) -> None:
+        """Stop speaking now without cancelling the turn (user left voice mode)."""
+        self.audio_muted = True
+        await self._stop_audio()
 
     async def notify_tts_failure(self) -> None:
         await self.send_chat(tts_failure_notice(self.bot_id.value))

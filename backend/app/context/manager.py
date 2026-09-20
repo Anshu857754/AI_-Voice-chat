@@ -22,6 +22,7 @@ no locking is needed here beyond the summarizer's own.
 from __future__ import annotations
 
 import asyncio
+import time
 from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -76,6 +77,8 @@ class RoomContextManager:
         self._summary_keep = s.context_summary_keep
         self._summarizer = summarizer
 
+        # Saved conversation currently in context; stamped on every new turn.
+        self.conversation_id: str | None = None
         self._turns: deque[Turn] = deque(maxlen=_MAX_TURNS)
         self._summary: str = ""
         # Turns already folded into the summary are not re-summarized.
@@ -134,6 +137,19 @@ class RoomContextManager:
         """Called for every committed turn (used to mirror the transcript to UI)."""
         self._listeners.append(listener)
 
+    def restore_turns(self, turns: list[Turn]) -> None:
+        """Reload saved turns after a restart so the bots remember the thread.
+
+        Deliberately silent: no listeners, memory ingestion or summarizing, so
+        history is not re-published, re-saved or re-answered.
+        """
+        for turn in turns:
+            self._turns.append(turn)
+            self._turn_seq += 1
+            if turn.is_human:
+                self._last_human_was_answered = True
+        log.stage(TAG_CONTEXT, event="context_restored", turns=len(turns))
+
     def _notify(self, turn: Turn) -> None:
         for listener in self._listeners:
             try:
@@ -161,6 +177,7 @@ class RoomContextManager:
             speaker_name=name,
             source=source,
             language=u.language.value,
+            conversation_id=self.conversation_id,
         )
         self._turns.append(turn)
         self._turn_seq += 1
@@ -212,6 +229,8 @@ class RoomContextManager:
         bot: BotId,
         source: TurnSource = TurnSource.VOICE,
         interrupted: bool = False,
+        request_id: str | None = None,
+        response_mode: str | None = None,
     ) -> Turn:
         """Commit a bot reply, including a partial one cut off by barge-in."""
         turn = Turn(
@@ -222,6 +241,9 @@ class RoomContextManager:
             source=source,
             bot_id=bot,
             interrupted=interrupted,
+            conversation_id=self.conversation_id,
+            request_id=request_id,
+            response_mode=response_mode,
         )
         self._turns.append(turn)
         self._turn_seq += 1
@@ -237,6 +259,16 @@ class RoomContextManager:
         self._maybe_summarize()
         self._maybe_update_topic()
         return turn
+
+    def mark_active(self, bot: BotId) -> None:
+        """Make ``bot`` the active AI as soon as it is chosen to answer.
+
+        Continuity must not wait for the reply to finish: a sentence split into
+        two transcripts ("Sathi, batao..." / "AI kya hota hai?") has to stay
+        with Sathi even though her first reply was interrupted before commit.
+        """
+        self._last_responder = bot
+        self._last_responder_at = time.time()
 
     def _bot_identity(self, bot: BotId) -> str:
         return (

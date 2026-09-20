@@ -31,6 +31,7 @@ export const TOPICS = {
   CHAT: 'lk.chat',
   TRANSCRIPT: 'roxstar.transcript',
   STATE: 'roxstar.state',
+  CONTROL: 'roxstar.control',
 }
 
 export const BUS_EVENTS = {
@@ -55,15 +56,20 @@ const textDecoder = new TextDecoder()
  * @param {string} [opts.identity] - reuse across refreshes to keep memory
  * @returns {Promise<{ room: Room, identity: string, livekitUrl: string }>}
  */
-export async function connectToRoom({ tokenEndpoint, displayName, room, identity }) {
+export async function connectToRoom({ tokenEndpoint, authToken, displayName, room, identity }) {
   const tokenRes = await fetch(`${tokenEndpoint}/token`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+    },
     body: JSON.stringify({ display_name: displayName, room, identity }),
   })
   if (!tokenRes.ok) {
     const body = await tokenRes.json().catch(() => ({}))
-    throw new Error(body.detail || `Token request failed (${tokenRes.status})`)
+    const err = new Error(body.detail || `Token request failed (${tokenRes.status})`)
+    err.status = tokenRes.status
+    throw err
   }
   const { token, url, identity: issuedIdentity } = await tokenRes.json()
 
@@ -203,6 +209,14 @@ export async function setMicrophoneEnabled(room, enabled) {
   await room.localParticipant.setMicrophoneEnabled(enabled)
 }
 
+/** UI -> worker control message (AI<->AI mode, stop). Humans only; the worker checks. */
+export async function sendControl(room, payload) {
+  await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify(payload)), {
+    reliable: true,
+    topic: TOPICS.CONTROL,
+  })
+}
+
 /** Send a room chat message on the shared chat topic. */
 export async function sendChatMessage(room, text) {
   await room.localParticipant.sendText(text, { topic: TOPICS.CHAT })
@@ -217,4 +231,4 @@ export function isConnected(room) {
   return room?.state === ConnectionState.Connected
 }
 
-export { Room, RoomEvent, ConnectionState, createLocalAudioTrack }
+export { Room, RoomEvent, Track, ConnectionState, createLocalAudioTrack }
