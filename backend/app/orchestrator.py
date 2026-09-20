@@ -133,6 +133,7 @@ class RoomOrchestrator:
         # Saved conversations: the worker serves ONE active conversation at a time
         # (the UI selects it with a `conversation` control message).
         self.active_conversation: str | None = None
+        self._conversation_error: dict[str, str] | None = None  # last refused activation (for the UI)
         self._active_by = ""  # identity of the session that opened it (UIs use this to avoid fighting)
         self._conv_settings: dict[str, object] = dict(DEFAULT_SETTINGS)
         self._participants: set[BotId] = set(BotId)
@@ -883,7 +884,7 @@ class RoomOrchestrator:
         except Exception:
             return
         task = asyncio.create_task(self._handle_control(msg, pkt.participant.identity))
-        task.add_done_callback(_swallow)
+        task.add_done_callback(_log_control_error)
 
     async def _handle_control(self, msg: dict, identity: str) -> None:
         kind = msg.get("type")
@@ -1072,7 +1073,9 @@ class RoomOrchestrator:
         any speech in progress is stopped; the user must press Voice again.
         """
         if not isinstance(cid, str) or self.conversations.owner(cid) != self._user_id_of(identity):
-            log.warning(tag=TAG_ROUTER, event="conversation_denied", by=identity)
+            log.warning(tag=TAG_ROUTER, event="conversation_denied", by=identity, conversation=str(cid)[:16])
+            self._conversation_error = {"id": str(cid), "reason": "not_found_or_not_owner"}
+            await self._publish_state()
             return
         if cid == self.active_conversation and not force:
             self._active_by = identity
@@ -1085,6 +1088,7 @@ class RoomOrchestrator:
         self._voice_users.clear()
         self._chain_left = 0
         self.active_conversation = cid
+        self._conversation_error = None
         self._active_by = identity
         self.context.conversation_id = cid
         self.context.reset()
@@ -1217,6 +1221,7 @@ class RoomOrchestrator:
             "conversation": {
                 "id": self.active_conversation,
                 "by": self._active_by,
+                "error": self._conversation_error,
                 "response_pref": self._response_pref,
                 "seq": self._save_seq,
                 "participants": sorted(b.value for b in self._participants),
@@ -1252,6 +1257,14 @@ class RoomOrchestrator:
             "providers": {"llm": self.llm.name, "stt": self.stt.name},
             "metrics": METRICS.snapshot(),
         }
+
+
+def _log_control_error(task: asyncio.Task[None]) -> None:
+    """A UI control message failed: never silent - the UI would just wait forever."""
+    if task.cancelled():
+        return
+    if exc := task.exception():
+        log.error(tag=TAG_ROOM, event="control_failed", error=repr(exc))
 
 
 def _swallow(task: asyncio.Task[None]) -> None:
