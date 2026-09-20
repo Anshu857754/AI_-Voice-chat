@@ -203,6 +203,132 @@ explicit dispatch is needed.
 LiveKit kick the first with `DuplicateIdentity`; the kicked worker logs
 `duplicate_identity` and exits instead of fighting for the room.
 
+### Accounts (login / signup)
+
+The UI opens on a ChatGPT-style login/signup page. Accounts are stored in a
+local SQLite file (`backend/data/users.db`, git-ignored); passwords are hashed
+with scrypt and sessions are signed JWTs. `/token` (the LiveKit join token)
+requires a logged-in session, and the participant's name/identity come from the
+account. Optional `.env` settings: `AUTH_REQUIRED` (default `true`),
+`AUTH_SECRET` (signing key; derived from `LIVEKIT_API_SECRET` when unset),
+`AUTH_DB_PATH`, `AUTH_TOKEN_TTL_HOURS`.
+
+### AI personality, model and reply length
+
+* Personas (tone, language rules, per-AI sentence cap) live in
+  [`backend/app/config/personas.toml`](backend/app/config/personas.toml) - edit
+  and restart the worker.
+* `OPENROUTER_MODEL` selects the LLM. `google/gemini-2.5-flash` is the fastest
+  and cheapest; `anthropic/claude-haiku-4.5` gave the most natural Hinglish in
+  our runs at similar latency; `anthropic/claude-sonnet-4.5` / `openai/gpt-4o`
+  are stronger but slower and costlier.
+* `LLM_TEMPERATURE` (0.7), `LLM_MAX_TOKENS` (150) and `LLM_MAX_TOKENS_DETAIL`
+  (400, used only when the user asks for detail).
+* Check a scripted conversation against the live stack:
+  `python -m scripts.convo_check` (worker must be running).
+
+### Conversations and chat history
+
+The app is a chat product, not just one room: a sidebar with **New Chat**, search, **Pinned** and **Recent** chats
+(grouped Today / Yesterday / Previous 7 days / Earlier by their real timestamps), an **Archived** page, rename,
+pin, archive, delete (with confirmation), clear, export (TXT / Markdown / JSON), per-chat settings and global
+settings. Chats have stable URLs (`/chat/:id`, `/archived`); refresh, back and forward restore the right chat.
+
+* **Storage.** Same SQLite file as before (`HISTORY_DB_PATH`, default `backend/data/chat.db`): a `conversations`
+  table (title, preview, timestamps, pinned, archived, participants, settings) plus the existing `messages` table,
+  now tagged with `conversation_id`. The sidebar loads summaries only (30 per page, infinite scroll); messages load
+  when a chat is opened (latest 50, "Load earlier messages" for more). Every query is scoped to the logged-in user.
+* **Titles.** "New Chat" until the first meaningful message; then a 3-7 word title (`app/titles.py`, no LLM needed;
+  the worker refines it with one tiny LLM call when available). "hi" -> "New Conversation". A manual rename is never
+  overwritten.
+* **API** (all need the Bearer token): `GET/POST /conversations`, `GET /conversations/search?q=`,
+  `GET/PATCH/DELETE /conversations/{id}`, `POST /conversations/{id}/clear`, `GET /conversations/{id}/messages?before=`,
+  `GET /conversations/{id}/export?format=txt|md|json`.
+* **Worker.** Opening a chat sends the control message `conversation {id}`; the worker verifies the chat belongs to
+  that user, resets its context and restores the chat's last turns, applies the chat's settings (participants,
+  language, reply length, AI Collaboration) and publishes `conversation {id, by, seq}` back. The composer stays
+  disabled until this is confirmed, so a message can never be filed under the previous chat.
+* **Voice safety.** Opening or switching to any chat - including one that was a voice chat - ALWAYS starts in text
+  mode: no microphone, no TTS, no speaking. The worker clears voice mode on every switch and the UI resets to text.
+* **Limits (by design of the single-room worker).** The worker serves ONE conversation at a time. If a second tab
+  or device opens another chat, the first shows "AI is being used in another session - Use here" instead of
+  fighting over it. Conversation history is stored in SQLite even when `MONGODB_URI` is set (Mongo remains the
+  legacy room history only). Unread badges are not implemented: only the open chat can receive messages.
+
+`python -m scripts.conversation_check --api http://localhost:8010` proves all of the above against the running stack
+(use a throw-away stack - see below - because it opens several conversations and switches the worker between them).
+A second, isolated stack for testing: run the API and worker with `ROOM_NAME=roxstar-test API_PORT=8020
+HISTORY_DB_PATH=./data/test_chat.db AUTH_DB_PATH=./data/test_users.db` and `python -m app.agent_worker --room roxstar-test`.
+
+### Realtime engine: text + voice, intent, languages, providers
+
+Full design: [ARCHITECTURE.md](ARCHITECTURE.md). Short version:
+
+**One pipeline for text and voice.** Typed messages and transcribed speech meet in `_process_utterance` and share
+language detection, intent, context, routing and the LLM. Text is always generated first and never waits for TTS;
+audio is added on top only when the user wants it.
+
+**Input mode and response mode are independent** (`backend/app/routing/voice_policy.py`, the single decision point):
+
+| The user... | Reply |
+|---|---|
+| types "How are you?" | text |
+| types "Hi, talk to me in voice." / "bhai voice mein baat kar" | text + voice (and stays voice: conversation preference `voice`) |
+| types "How are you? Speak your answer." / "bol ke batao" | text + voice for this reply only |
+| speaks with Voice mode on | text + voice |
+| speaks "Don't speak, just type." / types "only text", "likh ke batao" | text only (sticky phrases like "only text" also set the preference to `text`, which beats the Voice button) |
+| mentions the word: "What is voice AI?", "How does TTS work?", "Why isn't voice working?" | text (never a request) |
+
+The conversation preference is `auto` (default: text, plus voice when the Voice button is on or the message asks),
+`text` or `voice`; set from chat settings ("How the AI replies"), from a message, or from the chip above the input.
+Pressing Voice overrides an earlier "text only"; Stop Voice ends a "talk to me in voice" preference. **Opening or
+switching a conversation never starts speech** (mic off, preference reset to `auto`, worker clears voice mode).
+
+**Languages.** English, Hindi (Devanagari), Roman Hindi and Hinglish are detected per message
+(`backend/app/pipeline/language.py`); the reply follows the user ("Kaise ho?" -> natural Hinglish, "How are you?" ->
+English) unless asked ("Respond in English", "Hindi mein samjhao"); a chat can also pin a language. Adding another
+Indian language = one detector entry + one prompt instruction. Personas (`app/config/personas.toml`) use everyday
+conversational Hindi/Hinglish, not textbook Hindi. The model is told how its reply is delivered so it never claims it
+cannot speak.
+
+**Providers** (env only; business logic never imports a vendor):
+
+| Slot | Options | Notes |
+|---|---|---|
+| STT | `STT_PROVIDER=deepgram` (nova-2, `language=multi`, interim results) \| `null` | multilingual, good Hindi/English code-switching, streaming; noisy fragments are filtered (confidence, language, echo guard) |
+| LLM | OpenRouter (`OPENROUTER_MODEL`, default `anthropic/claude-haiku-4.5`) \| scripted offline | fast first token; reasoning disabled; temperature 0.7, ~150 tokens |
+| TTS | `TTS_PROVIDER=elevenlabs` \| `sarvam` \| `silent` | see below |
+
+*ElevenLabs* (`eleven_turbo_v2_5`, `TTS_LANGUAGE=hi`): streaming (audio starts before the sentence ends), good Indian
+Hindi and Hinglish code-switching, large voice library, official LiveKit plugin; cost is per character and the free
+tier (10k chars) is exhausted quickly - when it is, voice degrades to the text fallback. *Sarvam*
+(`app/pipeline/tts_sarvam.py`): built for Indian languages and priced for them; the REST endpoint returns a whole clip
+per request (no token streaming) so time-to-first-audio is one round trip per sentence chunk. It is implemented and
+unit-tested against a mocked transport but **was not exercised against the live service here** (no credentials):
+set `TTS_PROVIDER=sarvam`, `TTS_API_KEY`, `TTS_MODEL` (a Bulbul model id), `TTS_LANGUAGE=hi-IN`, and
+`DOST_VOICE_ID` / `SATHI_VOICE_ID` = Sarvam speaker names taken from Sarvam's current docs. Model and speaker names are
+deliberately never defaulted. Which one sounds better for your users is a config switch plus a listening test, not a
+rewrite. `silent` publishes silent audio of realistic length (tests / demos without quota).
+
+**States** shown in the UI are real: thinking -> writing (LLM streaming) -> "Preparing voice..." (TTS requested) ->
+speaking (only after the first audio frame was published). See ARCHITECTURE.md §6.
+
+**Failures** end in success, interruption or an error with Retry: TTS failure keeps the text and shows "Voice
+unavailable - text response shown" + Retry voice; STT failure shows "Couldn't understand the audio" + Retry and text
+chat keeps working; LLM failure gives an in-character fallback; network loss shows "Reconnecting..." and recovers.
+
+**Correlation and metrics.** Every reply carries `request_id` (the human message), `response_id`, `response_mode`;
+logs are structured; the debug panel shows p50/p95 for STT, router, LLM first token, LLM total, TTS first audio and
+end-to-end latency (measured, never invented).
+
+**Privacy and security.** No raw audio is stored (STT streams are processed and dropped); stored: transcript
+text, titles, previews and settings in SQLite. Provider keys live only in the server `.env`; the browser gets a
+short-lived room-scoped LiveKit token and a signed session token; conversations are scoped to the owning account.
+
+`python -m scripts.mode_check`, `scripts.conversation_check` and `scripts.acceptance_check [--audio] [--tts-fails]`
+run the acceptance tests against a live stack (use the isolated test stack described above); `pytest` runs 297+ unit
+and pipeline tests (`tests/test_engine.py` drives the real orchestrator with a fake audio source).
+
 ### Quick start (three terminals)
 
 ```bash
