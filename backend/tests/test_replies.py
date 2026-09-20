@@ -1,7 +1,13 @@
 """Reply quality plumbing: post-processing, history ordering, length hints."""
 
 from app.agents.base import clean_reply, strip_opening
-from app.agents.prompts import DOST_PERSONA, SATHI_PERSONA, max_sentences, render_persona, wants_detail
+from app.agents.prompts import (
+    DOST_PERSONA,
+    SATHI_PERSONA,
+    max_sentences,
+    render_persona,
+    wants_detail,
+)
 from app.context.manager import RoomContextManager
 from app.models.participant import BotId
 

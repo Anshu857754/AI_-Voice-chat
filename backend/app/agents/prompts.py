@@ -93,6 +93,11 @@ _REASON_INSTRUCTION: dict[RoutingReason, str] = {
         "User ne tumhe naam se address kiya hai. Seedha jawab do - "
         "'haan boliye' type acknowledgement waste mat karo."
     ),
+    RoutingReason.AI_CHAIN: (
+        "AI-AI mode on hai: user ne tum dono ko aapas mein baat karne ki ijazat di hai. "
+        "Doosre AI ne abhi jo kaha uska seedha, chhota jawab do aur baat aage badhao. "
+        "User ke sawaal se juda raho."
+    ),
     RoutingReason.EXPLICIT_MULTI_ADDRESS: (
         "User ne tumhe pehle answer karne ko kaha hai, aur doosre bot ko baad "
         "mein. Tum sirf apna hissa karo, doosre bot ke liye bol kar mat jao."
@@ -174,6 +179,26 @@ def style_instruction(
         return f"{_HINDI_ONLY_INSTRUCTION} {_BREVITY}"
     base = _LANGUAGE_INSTRUCTION.get(reply_language, _LANGUAGE_INSTRUCTION[Language.UNKNOWN])
     return f"{base} {_BREVITY}"
+
+
+def delivery_instruction(*, voice: bool) -> str:
+    """Tell the model how its reply is delivered so it never claims it cannot speak.
+
+    The text is always written by the model; audio is added by the system (TTS) when the
+    user wants it. Without this, models sometimes answer "voice available nahi hai".
+    """
+    if voice:
+        return (
+            "Delivery: tumhara jawab text ke saath awaaz mein bhi sunaya jayega (system khud bolta hai). "
+            "Kabhi mat kaho ki tum bol nahi sakte ya voice available nahi hai, aur user ko mic par bolne ya kuch aur karne "
+            "ko mat kaho - tum khud bolke jawab de rahe ho. Agar user ne bas voice mein baat karne ko kaha, to chhote "
+            "'theek hai' jaise ack ke saath seedha baat shuru karo. Natural bolchaal ka jawab do."
+        )
+    return (
+        "Delivery: yeh jawab text mein dikhega. Agar user awaaz mein sunna chahe to system khud bol deta hai, "
+        "isliye kabhi mat kaho ki voice available nahi hai. Agar user sirf text/voice badalne ko kahe "
+        "to ek chhote acknowledgement ke saath uske sawaal ka jawab do."
+    )
 
 
 def reason_instruction(reason: RoutingReason) -> str:

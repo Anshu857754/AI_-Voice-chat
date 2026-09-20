@@ -1,8 +1,4 @@
-"""Bot router: exactly one bot selected, deterministic rule priority.
-
-Mirrors the required demo scenarios in the spec (section 20) plus the
-duplicate-response and self-echo guards from section 8/15.
-"""
+"""pick_responder: every human message gets exactly one AI, chosen in one place."""
 
 from __future__ import annotations
 
@@ -12,12 +8,7 @@ import pytest
 
 from app.models.conversation import RoutingReason
 from app.models.participant import BotId
-from app.routing.router import BotRouter, RouterState
-
-
-@pytest.fixture
-def router() -> BotRouter:
-    return BotRouter(min_question_chars=3, followup_window_s=45.0)
+from app.routing.router import RouterState, pick_responder
 
 
 @pytest.fixture
@@ -25,185 +16,80 @@ def now() -> float:
     return time.time()
 
 
-class TestExplicitAddressing:
-    def test_explicit_dost(self, router, now):
-        d = router.route("AI Dost, tum answer karo.", speaker_identity="rahul", state=RouterState(), now=now)
+def pick(text, state=None, **kw):
+    return pick_responder(text, state or RouterState(), speaker_identity="rahul", **kw)
+
+
+class TestExplicitNames:
+    @pytest.mark.parametrize("text", ["AI Dost, tum answer karo.", "dost tum batao", "Dost tum batao"])
+    def test_dost_named(self, text):
+        d = pick(text)
+        assert d.selected_bot is BotId.DOST and d.reason is RoutingReason.EXPLICIT_ADDRESS
+
+    @pytest.mark.parametrize("text", ["AI Sathi, ek example do.", "Sathi tum batao AI kya hota hai"])
+    def test_sathi_named_overrides_active_ai(self, text):
+        d = pick(text, RouterState(last_responder=BotId.DOST, last_responder_at=time.time()))
+        assert d.selected_bot is BotId.SATHI
+
+    def test_both_named_first_one_answers_and_other_stays_silent(self):
+        d = pick("AI Dost, tum answer karo. AI Sathi, baad mein ek example dena.")
+        assert d.selected_bot is BotId.DOST
+        assert d.queued_bots == () and d.all_bots == (BotId.DOST,)
+        d = pick("Sathi aur Dost dono batao")
+        assert d.selected_bot is BotId.SATHI and d.all_bots == (BotId.SATHI,)
+
+
+class TestNoName:
+    def test_default_is_dost(self):
+        d = pick("AI kya hota hai?")
         assert d.should_respond and d.selected_bot is BotId.DOST
-        assert d.reason is RoutingReason.EXPLICIT_ADDRESS
-        assert d.queued_bots == ()
 
-    def test_explicit_sathi(self, router, now):
-        d = router.route("AI Sathi, ek example do.", speaker_identity="rahul", state=RouterState(), now=now)
-        assert d.should_respond and d.selected_bot is BotId.SATHI
-        assert d.reason is RoutingReason.EXPLICIT_ADDRESS
-
-    def test_explicit_multi_address_sequential_no_overlap(self, router, now):
-        """'AI Dost, tum answer karo. AI Sathi, baad mein ek example dena.'
-        Dost answers first; Sathi is queued, never concurrent."""
-        d = router.route(
-            "AI Dost, tum answer karo. AI Sathi, baad mein ek example dena.",
-            speaker_identity="rahul",
-            state=RouterState(),
-            now=now,
-        )
-        assert d.selected_bot is BotId.DOST
-        assert d.queued_bots == (BotId.SATHI,)
-        assert d.reason is RoutingReason.EXPLICIT_MULTI_ADDRESS
-        # Exactly one bot is "selected" for immediate generation.
-        assert d.all_bots == (BotId.DOST, BotId.SATHI)
-
-
-class TestRelevanceGate:
-    def test_fresh_question_gets_a_single_bot(self, router, now):
-        d = router.route("AI kya hota hai?", speaker_identity="rahul", state=RouterState(), now=now)
-        assert d.should_respond
-        assert d.selected_bot in (BotId.DOST, BotId.SATHI)
-
-    @pytest.mark.parametrize(
-        "text", ["Waise aaj weather kaafi achha hai.", "haan", "thanks"]
-    )
-    def test_irrelevant_sentences_suppressed(self, router, now, text):
-        d = router.route(text, speaker_identity="rahul", state=RouterState(), now=now)
-        assert d.should_respond is False
-        assert d.selected_bot is None
-
-
-class TestContinuityAndFollowup:
-    def test_followup_continues_with_thread_owner_even_for_different_speaker(self, router, now):
-        """Rahul asks, Dost answers. Priya's 'thoda aur simple batao' continues
-        with Dost - multi-user shared context, not per-speaker isolation."""
-        state = RouterState(
-            last_responder=BotId.DOST, last_responder_at=now, has_active_topic=True
-        )
-        d = router.route("Thoda aur simple batao", speaker_identity="priya", state=state, now=now)
-        assert d.selected_bot is BotId.DOST
-        assert d.reason is RoutingReason.CONVERSATION_CONTINUITY
-
-    def test_pronoun_followup_resolves_to_thread_owner(self, router, now):
-        state = RouterState(
-            last_responder=BotId.SATHI, last_responder_at=now, has_active_topic=True
-        )
-        d = router.route("Unki koi famous movie batao.", speaker_identity="rahul", state=state, now=now)
-        assert d.selected_bot is BotId.SATHI
-        assert d.reason is RoutingReason.CONVERSATION_CONTINUITY
-
-    def test_followup_outside_window_falls_back(self, router):
-        old = time.time() - 1000
-        state = RouterState(last_responder=BotId.DOST, last_responder_at=old, has_active_topic=True)
-        d = router.route("Thoda aur simple batao", speaker_identity="rahul", state=state, now=old + 2000)
-        # Stale thread: continuity rule should not fire (falls through to
-        # turn-taking, which still answers because "batao" is a request).
-        assert d.reason is not RoutingReason.CONVERSATION_CONTINUITY
-
-
-class TestInterruptionRouting:
-    def test_barge_in_redirects_to_speaking_bot(self, router, now):
-        state = RouterState(
-            last_responder=BotId.DOST,
-            last_responder_at=now,
-            speaking_bot=BotId.DOST,
-            has_active_topic=True,
-        )
-        d = router.route("Ruko, simple example se samjhao.", speaker_identity="rahul", state=state, now=now)
-        assert d.selected_bot is BotId.DOST
-        assert d.is_interruption is True
-        assert d.reason is RoutingReason.INTERRUPTION_REDIRECT
-
-
-class TestMemoryAndSelfDisclosureRouting:
-    def test_memory_query_goes_to_thread_owner(self, router, now):
+    def test_active_ai_keeps_the_conversation(self, now):
         state = RouterState(last_responder=BotId.SATHI, last_responder_at=now)
-        d = router.route(
-            "Maine apne baare mein kya bataya tha?", speaker_identity="rahul", state=state, now=now
-        )
-        assert d.should_respond
-        assert d.reason is RoutingReason.MEMORY_QUERY
+        for text in ["or btao", "kya ker rhe ho", "theek hai", "hii"]:
+            d = pick(text, state)
+            assert d.should_respond and d.selected_bot is BotId.SATHI, text
 
-    def test_self_disclosure_gets_acknowledged(self, router, now):
-        d = router.route(
-            "Mera naam Rahul hai aur mujhe cricket pasand hai.",
-            speaker_identity="rahul",
-            state=RouterState(),
-            now=now,
-        )
-        assert d.should_respond
-        assert d.reason is RoutingReason.SELF_DISCLOSURE
+    @pytest.mark.parametrize("text", ["hi", "hii", "hello", "haan", "ok", "thanks", "bye", "a"])
+    def test_every_message_gets_a_reply(self, text):
+        assert pick(text).should_respond
 
-
-class TestPersonaRouting:
-    def test_tech_topic_leans_dost(self, router, now):
-        d = router.route(
-            "kubernetes aur docker server pe kaise deploy karte hain?",
-            speaker_identity="rahul",
-            state=RouterState(),
-            now=now,
-        )
-        assert d.selected_bot is BotId.DOST
-        assert d.reason is RoutingReason.PERSONA_TOPIC
-
-    def test_lifestyle_topic_leans_sathi(self, router, now):
-        d = router.route(
-            "koi achhi bollywood movie aur song batao",
-            speaker_identity="rahul",
-            state=RouterState(),
-            now=now,
-        )
-        assert d.selected_bot is BotId.SATHI
-        assert d.reason is RoutingReason.PERSONA_TOPIC
-
-
-class TestTurnTakingFallback:
-    def test_sticks_with_one_bot_across_unrelated_fresh_questions(self, router):
-        """One voice per conversation: default Dost, then whoever spoke last."""
-        questions = [
-            "Photosynthesis kya hai?",
-            "Bank interest rate kaise decide hota hai?",
-            "Traffic signal kaun banata hai?",
-        ]
+    def test_no_rotation_between_unrelated_questions(self, now):
         state = RouterState()
-        selected = []
-        base = time.time()
-        for i, q in enumerate(questions):
-            d = router.route(q, speaker_identity="rahul", state=state, now=base + i * 120)
-            selected.append(d.selected_bot)
-            state = RouterState(
-                last_responder=d.selected_bot, last_responder_at=base + i * 120, turn_counter=i + 1
-            )
-        assert selected == [BotId.DOST] * 3
+        picked = []
+        for i, q in enumerate(["Photosynthesis kya hai?", "Bank interest kaise decide hota hai?", "Chai kaise banate hain?"]):
+            d = pick(q, state, now=now + i)
+            picked.append(d.selected_bot)
+            state = RouterState(last_responder=d.selected_bot, last_responder_at=now + i)
+        assert picked == [BotId.DOST] * 3
 
-    def test_greeting_gets_exactly_one_reply(self, router, now):
-        d = router.route("hello", speaker_identity="rahul", state=RouterState(), now=now)
-        assert d.should_respond and d.selected_bot is BotId.DOST and not d.queued_bots
+    def test_empty_message_gets_nothing(self):
+        assert not pick("   ").should_respond
 
 
-class TestDuplicateAndSelfEchoGuards:
-    def test_duplicate_within_window_suppressed(self, router, now):
+class TestGuards:
+    def test_duplicate_voice_final_suppressed_but_typed_text_is_not(self, now):
         state = RouterState(recent_human_utterances=(("rahul", "ai kya hota hai", now - 1.0),))
-        d = router.route("AI kya hota hai?", speaker_identity="rahul", state=state, now=now)
-        assert d.should_respond is False
-        assert d.reason is RoutingReason.DUPLICATE_SUPPRESSED
+        assert not pick("AI kya hota hai?", state, now=now).should_respond
+        assert pick("AI kya hota hai?", state, now=now, dedupe=False).should_respond
 
-    def test_bot_transcript_never_routes(self, router, now):
-        """A bot's own audio must never re-enter routing (would cause bots
-        to talk to each other forever)."""
-        d = router.route(
-            "AI ek technology hai", speaker_identity="roxstar-ai-dost", state=RouterState(), now=now
-        )
-        assert d.should_respond is False
-        assert d.reason is RoutingReason.BOT_SELF_ECHO
+    def test_ai_messages_never_trigger_a_reply(self):
+        from app.config.settings import get_settings
 
-    def test_too_short_ignored(self, router, now):
-        d = router.route("hm", speaker_identity="rahul", state=RouterState(), now=now)
-        assert d.should_respond is False
+        d = pick_responder("kya haal hai?", RouterState(), speaker_identity=get_settings().dost_identity)
+        assert not d.should_respond and d.reason is RoutingReason.BOT_SELF_ECHO
+
+    def test_speaking_ai_means_interruption(self):
+        d = pick("ruko, ek sawaal", RouterState(speaking_bot=BotId.DOST))
+        assert d.is_interruption
 
 
-class TestInvariant:
-    def test_no_response_means_no_bot_and_no_queue(self):
-        from app.models.conversation import RoutingDecision
+def test_active_ai_is_set_at_selection_so_a_split_sentence_stays_with_it():
+    from app.context.manager import RoomContextManager
 
-        d = RoutingDecision(
-            should_respond=False, selected_bot=BotId.DOST, reason=RoutingReason.SMALL_TALK
-        )
-        assert d.selected_bot is None
-        assert d.queued_bots == ()
-        assert d.all_bots == ()
+    ctx = RoomContextManager()
+    ctx.add_human_turn(text="Sathi, please tell me,", speaker_identity="u", speaker_name="A")
+    ctx.mark_active(BotId.SATHI)  # chosen, reply not finished yet
+    turn, _ = ctx.add_human_turn(text="what is AI?", speaker_identity="u", speaker_name="A")
+    d = pick_responder("what is AI?", ctx.router_state(exclude_turn_id=turn.turn_id), speaker_identity="u")
+    assert d.selected_bot is BotId.SATHI

@@ -24,8 +24,10 @@ class BotState(str, Enum):
     OFFLINE = "offline"
     IDLE = "idle"
     LISTENING = "listening"
-    THINKING = "thinking"
-    SPEAKING = "speaking"
+    THINKING = "thinking"  # waiting for the first token
+    GENERATING = "generating"  # LLM tokens are streaming
+    SYNTHESIZING = "synthesizing"  # TTS requested, no audio published yet
+    SPEAKING = "speaking"  # audio frames are really being published
     INTERRUPTED = "interrupted"
     CANCELLED = "cancelled"
     ERROR = "error"

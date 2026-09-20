@@ -279,7 +279,7 @@ class TurnManager:
                 return  # Already superseded by a newer turn.
             self._active = None
             for bot, state in list(self._states.items()):
-                if state in (BotState.THINKING, BotState.SPEAKING):
+                if state in (BotState.THINKING, BotState.GENERATING, BotState.SYNTHESIZING, BotState.SPEAKING):
                     self.set_state(bot, BotState.IDLE)
             if not self._pending:
                 log.stage(TAG_TURN, event="floor_free", turn_id=turn_id)

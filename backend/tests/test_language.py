@@ -35,10 +35,10 @@ class TestLanguageDetection:
         u = understand("What is this in the room?")
         assert u.language is Language.ENGLISH
 
-    def test_reply_language_for_english_question_is_hinglish(self):
-        """Spec: comfortable with English questions, but this is a Hinglish room."""
+    def test_reply_language_follows_the_user_english_stays_english(self):
+        """An English message gets an English reply; language never switches at random."""
         u = understand("Can you explain cloud computing?")
-        assert u.reply_language is Language.HINGLISH
+        assert u.reply_language is Language.ENGLISH
 
     def test_explicit_english_request_honoured(self):
         u = understand("Explain it in English please")

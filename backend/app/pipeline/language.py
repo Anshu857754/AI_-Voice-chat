@@ -267,10 +267,8 @@ class Utterance:
             return Language.ENGLISH
         if self.wants_hindi:
             return Language.HINDI
-        if self.language is Language.ENGLISH:
-            # English question -> reply in Hinglish, per the product brief:
-            # "comfortable with English questions" but still an Indian voice room.
-            return Language.HINGLISH
+        # Follow the user's language: an English message gets an English reply
+        # (a Hindi/Hinglish one gets natural Hindi/Hinglish). Never switch at random.
         if self.language is Language.UNKNOWN:
             return Language.HINGLISH
         return self.language
@@ -293,6 +291,9 @@ def _tokens(normalized: str) -> list[str]:
     return [t for t in normalized.split(" ") if t]
 
 
+_GREETING_TOKENS = frozenset({"hi", "hii", "hiii", "hey", "hello", "hlo"})
+
+
 def detect_language(text: str, normalized: str | None = None) -> Language:
     """Classify Hindi / Roman Hindi / Hinglish / English.
 
@@ -311,6 +312,9 @@ def detect_language(text: str, normalized: str | None = None) -> Language:
     toks = _tokens(norm)
     if not toks:
         return Language.UNKNOWN
+    # A leading "hi" is a greeting, not the Hindi word "hi" (= "is").
+    if len(toks) > 1 and toks[0] in _GREETING_TOKENS:
+        toks = toks[1:]
 
     strong_hindi = sum(1 for t in toks if t in _STRONG_HINDI_MARKERS)
     weak_hindi = sum(1 for t in toks if t in _AMBIGUOUS_MARKERS)
