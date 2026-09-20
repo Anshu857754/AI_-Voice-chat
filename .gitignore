@@ -37,3 +37,7 @@ Thumbs.db
 # Local account database
 backend/data/
 data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite3

@@ -180,7 +180,7 @@ python -m app.main
 # or: uvicorn app.main:app --reload --port 8000
 ```
 
-Verify: `curl http://localhost:8000/health` — reports which providers are
+Verify: `curl http://localhost:8000/health` (liveness) and `/health/details` — reports which providers are
 actually configured (never claims a feature works without checking).
 
 ## 10. Running the AI agents
