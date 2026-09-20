@@ -1,0 +1,28 @@
+# Roxstar AI Voice Room - backend dependencies
+#
+#   pip install -r requirements.txt
+#
+# Tested on Python 3.12. livekit-agents does not yet support Python 3.14;
+# use 3.10-3.13.
+
+# --- LiveKit -----------------------------------------------------------
+livekit-agents==1.8.2
+livekit-plugins-deepgram==1.8.2
+livekit-plugins-elevenlabs==1.8.2
+livekit-plugins-silero==1.8.2
+livekit-api==1.2.1
+
+# --- Web / token server --------------------------------------------------
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+
+# --- HTTP / config ---------------------------------------------------------
+httpx==0.28.1
+python-dotenv==1.2.3
+pydantic==2.13.5
+pydantic-settings==2.15.0
+
+# --- Dev / test --------------------------------------------------------
+pytest==9.1.1
+pytest-asyncio==1.4.0
+ruff==0.16.8

@@ -1,0 +1,36 @@
+[project]
+name = "roxstar-ai-voice-room-backend"
+version = "1.0.0"
+description = "LiveKit realtime voice room with two Hinglish AI participants"
+requires-python = ">=3.10,<3.14"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "ASYNC", "RUF"]
+ignore = [
+    "E501",    # line length is handled by the formatter
+    "B008",    # FastAPI dependencies rely on calls in defaults
+    "RUF001",  # ambiguous unicode: Devanagari + em dashes are intentional here
+    "RUF002",
+    "RUF003",
+    "UP042",   # str+Enum is deliberate: these serialize straight to JSON
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]
+"scripts/*" = ["E402", "ASYNC109", "ASYNC110"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_unused_ignores = false
+ignore_missing_imports = true
+check_untyped_defs = true
+exclude = ["tests/"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
