@@ -51,7 +51,7 @@ function storeIdentity(identity) {
   }
 }
 
-export function useRoom({ tokenEndpoint }) {
+export function useRoom({ tokenEndpoint, authToken, onAuthError }) {
   const [room, setRoom] = useState(null)
   const [connectionState, setConnectionState] = useState(ConnectionState.Disconnected)
   const [error, setError] = useState(null)
@@ -66,6 +66,7 @@ export function useRoom({ tokenEndpoint }) {
       try {
         const { room: lkRoom, identity } = await connectToRoom({
           tokenEndpoint,
+          authToken,
           displayName,
           room: roomName,
           identity: loadStoredIdentity(),
@@ -78,10 +79,11 @@ export function useRoom({ tokenEndpoint }) {
         return lkRoom
       } catch (err) {
         setError(err.message || 'Failed to join the room')
+        if (err.status === 401) onAuthError?.()
         throw err
       }
     },
-    [tokenEndpoint],
+    [tokenEndpoint, authToken, onAuthError],
   )
 
   const leave = useCallback(async () => {

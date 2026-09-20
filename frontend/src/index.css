@@ -1,21 +1,34 @@
 @import "tailwindcss";
 
 @theme {
-  --color-bg: #0b0f1a;
-  --color-panel: #12172a;
-  --color-panel-raised: #171d35;
-  --color-border: #232a45;
-  --color-text: #e8ebf5;
-  --color-text-dim: #8890ab;
-  --color-accent: #7c5cff;
-  --color-accent-soft: #7c5cff33;
-  --color-dost: #4fa8ff;
-  --color-dost-soft: #4fa8ff26;
-  --color-sathi: #ff6fa8;
-  --color-sathi-soft: #ff6fa826;
-  --color-live: #35d68a;
-  --color-warn: #ffb648;
-  --color-danger: #ff5c72;
+  /* Surfaces: tonal separation instead of borders. */
+  --color-bg: #070b14;
+  --color-panel: #0b1220; /* sidebar / context panel */
+  --color-surface: #080e19; /* conversation */
+  --color-panel-raised: #101827; /* elevated: bubbles, menus */
+  --color-input: #101a2c;
+  --color-border: #1a2438;
+  --color-hover: #ffffff0a;
+
+  /* Text */
+  --color-text: #e8edf6;
+  --color-text-dim: #8b97ae;
+  --color-text-faint: #5f6b83;
+
+  /* Identity colours, used consistently everywhere. */
+  --color-accent: #6d83ff;
+  --color-accent-soft: #6d83ff22;
+  --color-dost: #38bdf8; /* AI Dost: cyan/blue */
+  --color-dost-soft: #38bdf81f;
+  --color-sathi: #d08bf5; /* AI Sathi: purple/pink */
+  --color-sathi-soft: #d08bf51f;
+  --color-live: #34d399; /* humans: green */
+  --color-live-soft: #34d3991a;
+  --color-system: #94a3b8;
+  --color-warn: #f5b942;
+  --color-danger: #f26b6b;
+
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
 }
 
 html,
@@ -27,14 +40,17 @@ body,
 body {
   background: var(--color-bg);
   color: var(--color-text);
-  font-family:
-    'Inter',
-    ui-sans-serif,
-    system-ui,
-    -apple-system,
-    'Segoe UI',
-    sans-serif;
+  font-family: var(--font-sans);
+  font-size: 14px;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
 }
 
 ::-webkit-scrollbar {
@@ -45,42 +61,187 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--color-border);
+  background: #ffffff14;
   border-radius: 8px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-dim);
+  background: #ffffff26;
 }
 
-@keyframes pulse-ring {
-  0% {
-    box-shadow: 0 0 0 0 currentColor;
-    opacity: 0.7;
+/* ---- motion (all of it switched off under prefers-reduced-motion) ---- */
+
+@keyframes msg-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
   }
-  100% {
-    box-shadow: 0 0 0 8px transparent;
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.msg-in {
+  animation: msg-in 0.22s ease-out both;
+}
+
+@keyframes fade-in {
+  from {
     opacity: 0;
   }
+  to {
+    opacity: 1;
+  }
+}
+.fade-in {
+  animation: fade-in 0.18s ease-out both;
 }
 
-.speaking-ring::before {
-  content: '';
-  position: absolute;
-  inset: -3px;
-  border-radius: inherit;
-  border: 2px solid currentColor;
-  animation: pulse-ring 1.4s ease-out infinite;
+@keyframes sheet-up {
+  from {
+    transform: translateY(24px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+@keyframes sheet-left {
+  from {
+    transform: translateX(-24px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+@keyframes sheet-right {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+.sheet-up {
+  animation: sheet-up 0.22s ease-out both;
+}
+@media (min-width: 768px) {
+  .sheet-left {
+    animation: sheet-left 0.22s ease-out both;
+  }
+  .sheet-right {
+    animation: sheet-right 0.22s ease-out both;
+  }
 }
 
-@keyframes bar-bounce {
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.toast-in {
+  animation: toast-in 0.2s ease-out both;
+}
+
+/* Tiny waveform: bars stay low when idle, move when `.wave-on`. */
+@keyframes wave {
   0%,
   100% {
-    transform: scaleY(0.3);
+    transform: scaleY(0.25);
   }
   50% {
     transform: scaleY(1);
   }
 }
+.wave-bar {
+  transform: scaleY(0.25);
+  transform-origin: center;
+  transition: transform 0.2s;
+}
+.wave-on .wave-bar {
+  animation: wave 0.9s ease-in-out infinite;
+}
+
+@keyframes dot-blink {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+.typing-dot {
+  animation: dot-blink 1.2s infinite;
+}
+
+/* Speaking avatar: one soft ring, no glow. */
+@keyframes ring-soft {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring, var(--color-accent)) 55%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--ring, var(--color-accent)) 18%, transparent);
+  }
+}
+.speaking-ring {
+  animation: ring-soft 1.8s ease-in-out infinite;
+}
+
+/* Voice mode orb */
+@keyframes orb-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.1);
+  }
+}
+.orb {
+  animation: orb-breathe 2.6s ease-in-out infinite;
+}
+.orb-fast {
+  animation: orb-breathe 1s ease-in-out infinite;
+}
 .voice-bar {
-  animation: bar-bounce 0.9s ease-in-out infinite;
+  animation: wave 0.9s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .wave-on .wave-bar {
+    transform: scaleY(0.7);
+  }
+}
+
+/* Same rules, switched on manually from Settings > Appearance > Reduce motion. */
+[data-reduce-motion] *,
+[data-reduce-motion] *::before,
+[data-reduce-motion] *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
+}
+[data-reduce-motion] .wave-on .wave-bar {
+  transform: scaleY(0.7);
 }
