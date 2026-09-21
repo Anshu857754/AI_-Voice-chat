@@ -44,6 +44,8 @@ function Section({ label, children }) {
   )
 }
 
+const shownEmail = (user) => (user?.email?.endsWith('@guest.local') ? '' : user?.email || '')
+
 const railBtn =
   'flex h-10 w-10 items-center justify-center rounded-xl text-[var(--color-text-dim)] transition-colors hover:bg-[var(--color-hover)] hover:text-[var(--color-text)]'
 
@@ -112,17 +114,17 @@ export default function ChatSidebar({
             <Avatar name={user?.name} size={30} />
             <span className="min-w-0">
               <span className="block truncate text-sm font-medium text-[var(--color-text)]">{user?.name}</span>
-              <span className="block truncate text-[11px] text-[var(--color-text-faint)]">{user?.email}</span>
+              <span className="block truncate text-[11px] text-[var(--color-text-faint)]">{shownEmail(user) || 'Guest (testing)'}</span>
             </span>
           </>
         )
       }
       triggerClassName={collapsed ? railBtn : 'flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-[var(--color-hover)]'}
       items={[
-        { key: 'who', label: user?.name || 'Account', hint: user?.email, disabled: true, onSelect: () => {} },
+        { key: 'who', label: user?.name || 'Account', hint: shownEmail(user), disabled: true, onSelect: () => {} },
         { key: 'sep', separator: true },
         { key: 'settings', label: 'Settings', icon: <GearIcon size={16} />, onSelect: onOpenSettings },
-        { key: 'logout', label: 'Log out', icon: <LogoutIcon size={16} />, onSelect: onLogout },
+        ...(onLogout ? [{ key: 'logout', label: 'Log out', icon: <LogoutIcon size={16} />, onSelect: onLogout }] : []),
       ]}
     />
   )

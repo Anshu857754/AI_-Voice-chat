@@ -2,7 +2,8 @@
 
 Endpoints
 ---------
-``GET  /health``            liveness + which providers are configured
+``GET  /health``            liveness probe: {"status": "ok"}
+``GET  /health/details``    which providers are configured (no secrets)
 ``GET  /config``            non-secret config the frontend needs
 ``POST /token``             mint a LiveKit join token for a browser participant
 ``GET  /metrics``           observed latency stats (real measurements only)
@@ -131,8 +132,14 @@ def _make_identity(display_name: str, requested: str | None, user: User | None =
 
 
 @app.get("/health")
-async def health() -> dict[str, object]:
-    """Liveness plus a truthful report of what is actually configured."""
+async def health() -> dict[str, str]:
+    """Liveness probe (Render health check). No login, no database, nothing configuration-related."""
+    return {"status": "ok"}
+
+
+@app.get("/health/details")
+async def health_details() -> dict[str, object]:
+    """Liveness plus a truthful report of what is actually configured (names only, never values)."""
     return {
         "status": "ok",
         "room": settings.room_name,

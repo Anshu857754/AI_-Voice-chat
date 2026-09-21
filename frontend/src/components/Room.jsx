@@ -89,6 +89,7 @@ export default function Room({
   const inputRef = useRef(null)
   const activatedAt = useRef(0)
   const [displaced, setDisplaced] = useState(false)
+  const [activationFailed, setActivationFailed] = useState(false)
 
   const isXl = useMediaQuery('(min-width: 1280px)')
 
@@ -115,6 +116,7 @@ export default function Room({
     (reload = false) => {
       activatedAt.current = Date.now()
       setDisplaced(false)
+      setActivationFailed(false)
       return sendControl(room, { type: 'conversation', id: conversationId, ...(reload ? { reload: true } : {}) }).catch(() => {})
     },
     [room, conversationId],
@@ -134,11 +136,39 @@ export default function Room({
   // ...but only if that other session is still in the room; a closed tab must not keep the AI "busy".
   const ownerElsewhere =
     !!workerConv?.id && !confirmed && !!workerConv.by && workerConv.by !== localIdentity && humans.some((p) => p.identity === workerConv.by)
+  // Poll until the worker confirms this conversation (an effect that only reacts to worker updates
+  // can miss the moment and leave the composer disabled forever). Every 3 s: another live session owns
+  // the worker -> say so; otherwise ask again; after ~18 s show an explicit error with a Retry button.
+  const live = useRef({})
   useEffect(() => {
-    if (!workerConv || confirmed || Date.now() - activatedAt.current < 3000) return
-    if (ownerElsewhere) setDisplaced(true)
-    else activate()
-  }, [workerConv, confirmed, ownerElsewhere, activate])
+    live.current = { confirmed, ownerElsewhere }
+  }, [confirmed, ownerElsewhere])
+  useEffect(() => {
+    if (!online || confirmed) return undefined
+    let tries = 0
+    const timer = setInterval(() => {
+      if (live.current.confirmed || Date.now() - activatedAt.current < 2500) return
+      if (live.current.ownerElsewhere) return setDisplaced(true)
+      tries += 1
+      if (tries <= 6) activate()
+      else setActivationFailed(true)
+    }, 3000)
+    return () => clearInterval(timer)
+  }, [online, confirmed, activate])
+
+  // Only the session that currently holds the conversation plays the AI's voice. A second tab of the
+  // same account (or an old dev tab) would otherwise play it too, a fraction of a second later = echo.
+  const hearAI = confirmed && (!workerConv?.by || workerConv.by === localIdentity)
+  useEffect(() => {
+    const apply = () => {
+      for (const p of room.remoteParticipants.values()) {
+        for (const pub of p.audioTrackPublications.values()) pub.track?.setVolume?.(hearAI ? 1 : 0)
+      }
+    }
+    apply()
+    const t = setInterval(apply, 2000) // also covers tracks that get subscribed later
+    return () => clearInterval(t)
+  }, [room, hearAI, bots.length])
 
   // Sidebar preview / title / ordering follow every saved message (worker bumps `seq`).
   const seq = workerConv?.seq
@@ -241,9 +271,11 @@ export default function Room({
       ? 'AI participants abhi join nahi hue…'
       : displaced
         ? 'AI abhi doosre session mein use ho raha hai…'
-        : !confirmed
-          ? 'Conversation khul rahi hai…'
-          : undefined
+        : activationFailed
+          ? 'AI se connect nahi ho paya. Dobara try karo.'
+          : !confirmed
+            ? 'Conversation khul rahi hai…'
+            : undefined
 
   return (
     <div className="flex h-full min-w-0 flex-col overflow-hidden bg-[var(--color-bg)]">
@@ -299,6 +331,14 @@ export default function Room({
               onRetry={transcript.retry}
             />
           </div>
+          {activationFailed && !confirmed && !displaced && (
+            <div className="mx-auto mb-2 flex w-full max-w-3xl items-center justify-between gap-3 rounded-xl bg-[var(--color-danger)]/10 px-4 py-2.5 text-xs text-[var(--color-danger)]" role="alert">
+              <span>{workerConv?.error ? 'Server ko yeh conversation nahi mili.' : 'AI worker se conversation connect nahi ho pa rahi (worker chal raha hai?).'}</span>
+              <button type="button" onClick={() => activate()} className="shrink-0 rounded-lg bg-[var(--color-danger)]/20 px-3 py-1.5 font-medium text-[var(--color-text)] hover:bg-[var(--color-danger)]/30">
+                Dobara try karo
+              </button>
+            </div>
+          )}
           {displaced && !confirmed && (
             <div className="mx-auto mb-2 flex w-full max-w-3xl items-center justify-between gap-3 rounded-xl bg-[var(--color-warn)]/10 px-4 py-2.5 text-xs text-[var(--color-warn)]" role="status">
               <span>AI abhi kisi aur tab / device ki conversation ke saath use ho raha hai. Ek waqt mein ek hi conversation active rehti hai.</span>

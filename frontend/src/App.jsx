@@ -6,9 +6,12 @@ import { useRoom } from './hooks/useRoom'
 
 const TOKEN_ENDPOINT = import.meta.env.VITE_TOKEN_ENDPOINT || 'http://localhost:8000'
 const DEFAULT_ROOM = import.meta.env.VITE_DEFAULT_ROOM || ''
+// While testing there is no login page: every visitor silently gets a private guest account.
+// Build with VITE_REQUIRE_LOGIN=true to bring the login / signup page back.
+const GUEST_MODE = import.meta.env.VITE_REQUIRE_LOGIN !== 'true'
 
 export default function App() {
-  const { user, token, checking, login, signup, logout } = useAuth(TOKEN_ENDPOINT)
+  const { user, token, checking, error: authError, retry, guest, login, signup, logout } = useAuth(TOKEN_ENDPOINT, { guestMode: GUEST_MODE })
   const { room, connectionState, error, micEnabled, micError, join, leave, toggleMic } = useRoom({
     tokenEndpoint: TOKEN_ENDPOINT,
     authToken: token,
@@ -47,7 +50,19 @@ export default function App() {
     return <div className="flex min-h-screen items-center justify-center text-sm text-[var(--color-text-dim)]">Loading…</div>
   }
 
+  if (!user && GUEST_MODE) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-3 px-6 text-center text-sm text-[var(--color-text-dim)]">
+        <p role={authError ? 'alert' : 'status'}>{authError || 'Guest session bana rahe hain…'}</p>
+        {authError && (
+          <button type="button" onClick={retry} className="rounded-xl bg-[var(--color-accent)] px-4 py-2 font-medium text-white">
+            Dobara try karo
+          </button>
+        )}
+      </div>
+    )
+  }
   if (!user) return <AuthScreen onLogin={login} onSignup={signup} />
 
-  return <AppShell user={user} token={token} tokenEndpoint={TOKEN_ENDPOINT} onLogout={handleLogout} rtc={rtc} />
+  return <AppShell user={user} token={token} tokenEndpoint={TOKEN_ENDPOINT} onLogout={guest ? null : handleLogout} rtc={rtc} />
 }

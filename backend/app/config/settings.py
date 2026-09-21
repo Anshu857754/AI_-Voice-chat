@@ -19,6 +19,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # the token server, the agent worker and (via VITE_*) the frontend.
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
+DEV_CORS_ORIGINS = ("http://localhost:5173", "http://127.0.0.1:5173")  # used only when CORS_ORIGINS is empty
 STTProviderName = Literal["deepgram", "null"]
 TTSProviderName = Literal["elevenlabs", "sarvam", "silent"]
 
@@ -109,7 +110,9 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     token_ttl_minutes: int = 120
-    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    # Comma-separated browser origins allowed to call the API (e.g. your Vercel URL).
+    # Empty = development: only the local Vite dev server is allowed.
+    cors_origins: str = ""
 
     # ---- Accounts (login / signup) ------------------------------------------
     auth_required: bool = True
@@ -136,7 +139,8 @@ class Settings(BaseSettings):
     # ---- Derived helpers --------------------------------------------------
     @property
     def cors_origin_list(self) -> list[str]:
-        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+        origins = [o.strip().rstrip("/") for o in self.cors_origins.split(",") if o.strip()]
+        return origins or list(DEV_CORS_ORIGINS)
 
     @property
     def livekit_configured(self) -> bool:
