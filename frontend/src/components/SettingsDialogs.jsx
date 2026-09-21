@@ -101,10 +101,14 @@ export function SettingsDialog({ prefs, setPref, user, onLogout, onClose }) {
           {section === 'account' && (
             <div className="py-2">
               <p className="text-sm font-medium text-[var(--color-text)]">{user?.name}</p>
-              <p className="mb-4 text-sm text-[var(--color-text-dim)]">{user?.email}</p>
-              <button type="button" onClick={onLogout} className={`${ghostBtn} ring-1 ring-white/12`}>
-                Log out
-              </button>
+              <p className="mb-4 text-sm text-[var(--color-text-dim)]">
+                {user?.email?.endsWith('@guest.local') ? 'Guest session (testing): tumhari chats is browser mein save hain.' : user?.email}
+              </p>
+              {onLogout && (
+                <button type="button" onClick={onLogout} className={`${ghostBtn} ring-1 ring-white/12`}>
+                  Log out
+                </button>
+              )}
             </div>
           )}
         </div>
